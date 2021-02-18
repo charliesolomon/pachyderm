@@ -8,6 +8,7 @@ import (
 	"github.com/pachyderm/pachyderm/v2/src/identity"
 
 	dex_server "github.com/dexidp/dex/server"
+	"github.com/jmoiron/sqlx"
 	logrus "github.com/sirupsen/logrus"
 )
 
@@ -28,14 +29,16 @@ type dexWeb struct {
 	server       *dex_server.Server
 	serverCancel context.CancelFunc
 
+	db              *sqlx.DB
 	logger          *logrus.Entry
 	storageProvider StorageProvider
 }
 
-func newDexWeb(sp StorageProvider, logger *logrus.Entry) *dexWeb {
+func newDexWeb(sp StorageProvider, logger *logrus.Entry, db *sqlx.DB) *dexWeb {
 	return &dexWeb{
 		logger:          logger,
 		storageProvider: sp,
+		db:              db,
 	}
 }
 
@@ -129,6 +132,10 @@ func (w *dexWeb) interceptApproval(server *dex_server.Server) func(http.Response
 			return
 		}
 		w.logger.Infof("authenticated user: %q", authReq.Claims.Email)
+		if _, err := w.db.ExecContext(r.Context(), `INSERT INTO identity.users (email, last_authenticated, enabled) VALUES ($1, now(), true) ON CONFLICT UPDATE last_authenticated=NOW()`, authReq.Claims.Email); err != nil {
+			rw.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		server.ServeHTTP(rw, r)
 	}
 }
